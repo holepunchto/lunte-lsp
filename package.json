@@ -1,0 +1,89 @@
+{
+  "name": "lunte-lsp",
+  "version": "1.8.3",
+  "description": "Language Server Protocol wrapper for Lunte",
+  "type": "module",
+  "main": "./src/server.js",
+  "bin": {
+    "lunte-lsp": "bin/lunte-lsp"
+  },
+  "license": "Apache-2.0",
+  "author": "Mikkel Malmberg <mikkel@holepunch.to>",
+  "keywords": [
+    "lsp",
+    "language-server",
+    "language-server-protocol",
+    "lunte",
+    "linter",
+    "javascript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/holepunchto/lunte-lsp.git"
+  },
+  "homepage": "https://github.com/holepunchto/lunte-lsp#readme",
+  "bugs": {
+    "url": "https://github.com/holepunchto/lunte-lsp/issues"
+  },
+  "dependencies": {
+    "lunte": "^1.8.2"
+  },
+  "imports": {
+    "path": {
+      "bare": "bare-path",
+      "default": "path"
+    },
+    "process": {
+      "bare": "bare-process",
+      "default": "process"
+    },
+    "url": {
+      "bare": "bare-url",
+      "default": "url"
+    },
+    "util": {
+      "bare": "bare-utils",
+      "default": "util"
+    },
+    "child_process": {
+      "bare": "bare-subprocess",
+      "default": "child_process"
+    },
+    "events": {
+      "bare": "bare-events",
+      "default": "events"
+    },
+    "fs": {
+      "bare": "bare-fs",
+      "default": "fs"
+    },
+    "fs/*": {
+      "bare": "bare-fs/*",
+      "default": "fs/*"
+    },
+    "os": {
+      "bare": "bare-os",
+      "default": "os"
+    }
+  },
+  "optionalDependencies": {
+    "bare-path": "^3.0.0",
+    "bare-process": "^4.3.0",
+    "bare-url": "^2.3.2",
+    "bare-utils": "^1.5.1",
+    "bare-subprocess": "^6.1.0",
+    "bare-events": "^2.8.1",
+    "bare-fs": "^4.7.0",
+    "bare-os": "^3.6.2"
+  },
+  "scripts": {
+    "test": "npm run test:node && npm run test:bare",
+    "test:node": "brittle-node \"test/**/*.test.js\"",
+    "test:bare": "brittle-bare \"test/**/*.test.js\"",
+    "test:package": "node scripts/test-package.js"
+  },
+  "devDependencies": {
+    "brittle": "^3.19.0",
+    "bare": "^1.24.1"
+  }
+}
