@@ -110,6 +110,107 @@ test('LSP lints unsaved changes', async (t) => {
   await client.shutdown()
 })
 
+test('LSP diagnostic ranges cover the reported token after the first line', async (t) => {
+  const lineEndings = { lf: '\n', crlf: '\r\n', cr: '\r' }
+  const files = {}
+  for (const [name, eol] of Object.entries(lineEndings)) {
+    files[`${name}.js`] = ['const used = 1', 'const unused = 2', 'console.log(used)', ''].join(eol)
+  }
+  const workspaceDir = await createTempWorkspace(t, files)
+
+  const client = await createLspClient(t, { cwd: workspaceDir })
+  const rootUri = pathToFileURL(workspaceDir).href
+  await client.sendRequest('initialize', { rootUri })
+  client.sendNotification('initialized', {})
+
+  for (const name of Object.keys(lineEndings)) {
+    const documentUri = pathToFileURL(join(workspaceDir, `${name}.js`)).href
+    client.sendNotification('textDocument/didOpen', {
+      textDocument: {
+        uri: documentUri,
+        languageId: 'javascript',
+        version: 1,
+        text: files[`${name}.js`]
+      }
+    })
+
+    const publish = await client.waitForNotification('textDocument/publishDiagnostics')
+    t.is(publish.params?.uri, documentUri, `${name}: diagnostics are for the opened document`)
+    const diagnostics = publish.params?.diagnostics ?? []
+    t.is(diagnostics.length, 1, `${name}: reports a single diagnostic`)
+    t.is(diagnostics[0]?.code, 'no-unused-vars', `${name}: reports the unused variable`)
+    t.alike(
+      diagnostics[0]?.range,
+      { start: { line: 1, character: 6 }, end: { line: 1, character: 12 } },
+      `${name}: range covers the identifier on the second line`
+    )
+  }
+
+  await client.shutdown()
+})
+
+test('LSP diagnostic ranges track unsaved non-ASCII and end-of-line positions', async (t) => {
+  const workspaceDir = await createTempWorkspace(t, {
+    'file.js': 'const used = 1\nconsole.log(used)\n'
+  })
+
+  const client = await createLspClient(t, { cwd: workspaceDir })
+  const rootUri = pathToFileURL(workspaceDir).href
+  await client.sendRequest('initialize', { rootUri })
+  client.sendNotification('initialized', {})
+
+  const documentPath = join(workspaceDir, 'file.js')
+  const documentUri = pathToFileURL(documentPath).href
+  const diskText = await readFile(documentPath, 'utf8')
+
+  client.sendNotification('textDocument/didOpen', {
+    textDocument: {
+      uri: documentUri,
+      languageId: 'javascript',
+      version: 1,
+      text: diskText
+    }
+  })
+
+  const openPublish = await client.waitForNotification('textDocument/publishDiagnostics')
+  t.is(openPublish.params?.diagnostics?.length ?? 0, 0, 'clean file has no diagnostics')
+
+  // The emoji occupies two UTF-16 code units, so the identifier starts at character 22.
+  client.sendNotification('textDocument/didChange', {
+    textDocument: { uri: documentUri, version: 2 },
+    contentChanges: [
+      { text: "console.log('é')\r\nconst x = '😀'; const ünused = 2\r\nconsole.log(x)\r\n" }
+    ]
+  })
+
+  const unicodePublish = await client.waitForNotification('textDocument/publishDiagnostics')
+  const unicodeDiagnostics = unicodePublish.params?.diagnostics ?? []
+  t.is(unicodeDiagnostics.length, 1, 'unsaved non-ASCII edit reports a single diagnostic')
+  t.is(unicodeDiagnostics[0]?.code, 'no-unused-vars', 'reports the unused variable')
+  t.alike(
+    unicodeDiagnostics[0]?.range,
+    { start: { line: 1, character: 22 }, end: { line: 1, character: 28 } },
+    'range uses UTF-16 columns and covers the non-ASCII identifier'
+  )
+
+  client.sendNotification('textDocument/didChange', {
+    textDocument: { uri: documentUri, version: 3 },
+    contentChanges: [{ text: 'const used = 1\nconsole.log(used, ' }]
+  })
+
+  const eolPublish = await client.waitForNotification('textDocument/publishDiagnostics')
+  const eolDiagnostics = eolPublish.params?.diagnostics ?? []
+  t.is(eolDiagnostics.length, 1, 'unsaved syntax error reports a single diagnostic')
+  t.is(eolDiagnostics[0]?.severity, 1, 'syntax error is reported as an error')
+  t.alike(
+    eolDiagnostics[0]?.range,
+    { start: { line: 1, character: 18 }, end: { line: 1, character: 18 } },
+    'end-of-line diagnostic stays within the line without inverting'
+  )
+
+  await client.shutdown()
+})
+
 for (const method of ['workspace/didChangeConfiguration', 'workspace/didChangeWatchedFiles']) {
   test(`${method} triggers config revalidation`, async (t) => {
     const workspaceDir = await createTempWorkspace(t, {
