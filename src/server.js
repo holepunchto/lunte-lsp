@@ -37,7 +37,6 @@ let ignoreMatcher = createIgnoreMatcher()
 connection.onRequest('initialize', handleInitialize)
 connection.onRequest('shutdown', handleShutdown)
 
-connection.onNotification('initialized', handleInitialized)
 connection.onNotification('exit', handleExit)
 connection.onNotification('textDocument/didOpen', handleDidOpen)
 connection.onNotification('textDocument/didChange', handleDidChange)
@@ -74,10 +73,6 @@ async function handleInitialize(params = {}) {
 async function handleShutdown() {
   shuttingDown = true
   return null
-}
-
-function handleInitialized() {
-  // No-op for now. Placeholder for future file watchers or telemetry.
 }
 
 function handleExit() {
@@ -149,7 +144,6 @@ async function refreshWorkspaceState() {
       : []
     cachedPlugins = Array.isArray(config?.plugins) ? config.plugins : []
   } catch (error) {
-    // Surfacing config failures via diagnostics would be noisy; log to stderr for now.
     log(`Failed to load config: ${error.message}`)
     cachedEnvOverrides = []
     cachedGlobalOverrides = []
@@ -190,8 +184,9 @@ async function validateDocument(uri) {
       sourceOverrides: new Map([[doc.filePath, doc.text]])
     })
 
+    const lines = doc.text.split(/\r\n|\r|\n/)
     const lspDiagnostics = diagnostics.map((diagnostic) =>
-      convertToLspDiagnostic(diagnostic, doc.text)
+      convertToLspDiagnostic(diagnostic, lines)
     )
     publishDiagnostics(uri, lspDiagnostics)
   } catch (error) {
@@ -213,19 +208,21 @@ function publishDiagnostics(uri, diagnostics) {
   })
 }
 
-function convertToLspDiagnostic(diagnostic, sourceText) {
-  const lineIndex = Math.max(0, (diagnostic.line ?? 1) - 1)
-  const columnIndex = Math.max(0, (diagnostic.column ?? 1) - 1)
-  const lineLength = getLineLength(sourceText, lineIndex)
-  const endCharacter = Math.min(lineLength, columnIndex + 1)
+// core positions are 1-based; both protocols count utf-16 code units.
+function convertToLspDiagnostic(diagnostic, lines) {
+  const lineIndex = Math.min(toZeroBasedIndex(diagnostic.line), lines.length - 1)
+  const line = lines[lineIndex]
+  const startCharacter = Math.min(toZeroBasedIndex(diagnostic.column), line.length)
+  // without an end position, underline the identifier or one code point.
+  const endCharacter = startCharacter + getTokenLength(line, startCharacter)
 
   const severity =
     diagnostic.severity === Severity.error ? DiagnosticSeverity.error : DiagnosticSeverity.warning
 
   return {
     range: {
-      start: { line: lineIndex, character: columnIndex },
-      end: { line: lineIndex, character: Math.max(endCharacter, columnIndex) }
+      start: { line: lineIndex, character: startCharacter },
+      end: { line: lineIndex, character: endCharacter }
     },
     severity,
     message: diagnostic.message,
@@ -234,39 +231,21 @@ function convertToLspDiagnostic(diagnostic, sourceText) {
   }
 }
 
-function getLineLength(text, lineIndex) {
-  if (typeof text !== 'string' || text.length === 0) {
-    return 0
-  }
-  let currentLine = 0
-  let lastIndex = 0
-  while (currentLine < lineIndex) {
-    const nextBreak = findNextLineBreak(text, lastIndex)
-    if (nextBreak === -1) {
-      return Math.max(text.length - lastIndex, 0)
-    }
-    lastIndex = nextBreak
-    currentLine += 1
-  }
-  const endOfLine = findNextLineBreak(text, lastIndex)
-  const endIndex = endOfLine === -1 ? text.length : endOfLine
-  return Math.max(endIndex - lastIndex, 0)
+function toZeroBasedIndex(value) {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value) - 1) : 0
 }
 
-function findNextLineBreak(text, startIndex) {
-  for (let i = startIndex; i < text.length; i += 1) {
-    const char = text.charCodeAt(i)
-    if (char === 10 /* \n */) {
-      return i
-    }
-    if (char === 13 /* \r */) {
-      if (i + 1 < text.length && text.charCodeAt(i + 1) === 10) {
-        return i + 1
-      }
-      return i
-    }
+const IDENTIFIER_RUN = /^[\p{ID_Continue}$\u200c\u200d]+/u
+
+function getTokenLength(line, character) {
+  if (character >= line.length) {
+    return 0
   }
-  return -1
+  const identifier = IDENTIFIER_RUN.exec(line.slice(character))
+  if (identifier) {
+    return identifier[0].length
+  }
+  return line.codePointAt(character) > 0xffff ? 2 : 1
 }
 
 function uriToFilePath(uri) {
@@ -420,12 +399,9 @@ function log(message) {
   const line = `[lunte-lsp] ${message}`
   try {
     process.stderr.write(`${line}\n`)
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
-// Handle uncaught exceptions to avoid silent failures.
 process.on('uncaughtException', (error) => {
   log(`Uncaught exception: ${error.stack ?? error.message}`)
 })
